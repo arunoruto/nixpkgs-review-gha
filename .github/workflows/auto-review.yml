@@ -16,12 +16,20 @@ jobs:
         run: |
           # ponytail: one review per PR number, new pushes to a PR are not re-reviewed
           done="$(gh run list -R "$GITHUB_REPOSITORY" -w review.yml -L 500 --json displayTitle -q '.[].displayTitle')"
+          # PRs without rebuild labels are not evaluated by nixpkgs CI yet and are picked up on a later run.
           gh search prs --repo NixOS/nixpkgs --state open --draft=false --author r-ryantm \
-            --review-requested "$GITHUB_REPOSITORY_OWNER" --json number -q '.[].number' |
-          while read -r pr; do
+            --review-requested "$GITHUB_REPOSITORY_OWNER" --json number,labels \
+            -q '.[] | [.labels[].name] as $l | select($l | any(test("rebuild-linux: "))) | [.number, ($l | any(test("rebuild-linux: 0$")) | not), ($l | any(test("rebuild-darwin: 0$")) | not)] | @tsv' |
+          while read -r pr linux darwin; do
             grep -qx "review #$pr" <<<"$done" && continue
-            echo "dispatching review for #$pr"
-            gh workflow run review.yml -R "$GITHUB_REPOSITORY" -f pr="$pr"
+            if [[ $linux == false && $darwin == false ]]; then
+              echo "skipping #$pr, nothing to rebuild"
+              continue
+            fi
+            echo "dispatching review for #$pr (linux=$linux, aarch64-darwin=$darwin)"
+            gh workflow run review.yml -R "$GITHUB_REPOSITORY" -f pr="$pr" \
+              -f x86_64-linux="$linux" -f aarch64-linux="$linux" \
+              -f x86_64-darwin=no -f aarch64-darwin="$([[ $darwin == true ]] && echo yes_sandbox_relaxed || echo no)"
           done
         env:
           GH_TOKEN: ${{ github.token }}
