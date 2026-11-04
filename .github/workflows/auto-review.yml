@@ -1,0 +1,27 @@
+name: auto-review
+
+permissions:
+  actions: write
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dispatch reviews for r-ryantm PRs requesting my review
+        run: |
+          # ponytail: one review per PR number, new pushes to a PR are not re-reviewed
+          done="$(gh run list -R "$GITHUB_REPOSITORY" -w review.yml -L 500 --json displayTitle -q '.[].displayTitle')"
+          gh search prs --repo NixOS/nixpkgs --state open --draft=false --author r-ryantm \
+            --review-requested "$GITHUB_REPOSITORY_OWNER" --json number -q '.[].number' |
+          while read -r pr; do
+            grep -qx "review #$pr" <<<"$done" && continue
+            echo "dispatching review for #$pr"
+            gh workflow run review.yml -R "$GITHUB_REPOSITORY" -f pr="$pr"
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
